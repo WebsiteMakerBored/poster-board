@@ -1,0 +1,935 @@
+<!--
+AUDIT + UPDATES
+===============
+- Admin can remove community requests and comments (with confirmation, undo toast, bulk tools).
+- Password screen redesigned as iOS-style sheet (blurred backdrop, lock icon, shake on wrong, countdown, eye toggle).
+- Central state store with optimistic updates, BroadcastChannel + storage sync, debounced saves, partial re-renders, relative time refresh.
+- All previous features and light/dark parity preserved.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Poster Board</title>
+<script>
+(function(){
+  var t = localStorage.getItem("pb_theme");
+  if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<style>
+:root {
+  --bg: #f5f5f7; --surface: #ffffff; --field: #f2f2f7;
+  --text: #1d1d1f; --text-secondary: #6e6e73; --text-tertiary: #86868b;
+  --border: rgba(0,0,0,0.08); --accent: #0a84ff; --accent-soft: rgba(10,132,255,0.12);
+  --gold: #d4a017; --red: #ff3b30; --green: #30d158;
+  --radius: 24px; --radius-sm: 14px; --radius-pill: 999px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
+  --font: -apple-system, "SF Pro Text", "SF Pro Display", Inter, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000; --surface: #1c1c1e; --field: #2c2c2e;
+    --text: #f5f5f7; --text-secondary: #98989d; --text-tertiary: #6e6e73;
+    --border: rgba(255,255,255,0.1);
+    --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.25);
+  }
+}
+[data-theme="dark"] {
+  --bg: #000000; --surface: #1c1c1e; --field: #2c2c2e;
+  --text: #f5f5f7; --text-secondary: #98989d; --text-tertiary: #6e6e73;
+  --border: rgba(255,255,255,0.1);
+  --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.25);
+}
+[data-theme="light"] {
+  --bg: #f5f5f7; --surface: #ffffff; --field: #f2f2f7;
+  --text: #1d1d1f; --text-secondary: #6e6e73; --text-tertiary: #86868b;
+  --border: rgba(0,0,0,0.08);
+  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.05);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 17px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+button, input, select, textarea { font-family: inherit; font-size: 17px; }
+button { cursor: pointer; border: none; background: none; color: inherit; min-height: 44px; transition: transform 0.1s; }
+button:active { transform: scale(0.97); }
+img { max-width: 100%; display: block; }
+input:focus, textarea:focus, select:focus { outline: none; box-shadow: 0 0 0 3px rgba(10,132,255,0.35); }
+
+header {
+  position: sticky; top: 0; z-index: 100;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px; padding-top: calc(14px + env(safe-area-inset-top));
+  display: flex; align-items: center; gap: 16px;
+}
+.logo { font-weight: 600; font-size: 20px; cursor: pointer; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 8px; touch-action: manipulation; -webkit-tap-highlight-color: transparent; padding: 8px; }
+.logo svg { width: 24px; height: 24px; }
+nav.desktop { display: flex; gap: 4px; margin-left: 8px; }
+nav.desktop button { padding: 10px 16px; border-radius: var(--radius-pill); font-weight: 500; font-size: 16px; }
+nav.desktop button:hover, nav.desktop button.active { background: var(--surface); }
+.search-wrap { position: relative; flex: 1; max-width: 260px; margin-left: auto; }
+.search-wrap input { width: 100%; background: var(--field); border: none; border-radius: var(--radius-pill); padding: 12px 16px 12px 40px; color: var(--text); height: 44px; }
+.search-wrap svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--text-tertiary); }
+.theme-toggle { padding: 10px; border-radius: var(--radius-pill); }
+.theme-toggle:hover { background: var(--surface); }
+
+main { padding: 48px 20px 140px; max-width: 1200px; margin: 0 auto; }
+@media (min-width: 768px) { main { padding-left: 40px; padding-right: 40px; } }
+.section-header { display: flex; justify-content: space-between; align-items: baseline; margin: 56px 0 20px; }
+.section-title { font-size: 24px; font-weight: 600; }
+
+.hscroll { display: flex; gap: 20px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 8px 4px 20px; -webkit-overflow-scrolling: touch; }
+.hscroll::-webkit-scrollbar { display: none; }
+.hcard { scroll-snap-align: start; flex: 0 0 160px; }
+@media (min-width: 768px) { .hcard { flex: 0 0 180px; } }
+.hcard .poster { width: 100%; aspect-ratio: 2/3; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); background: var(--field); position: relative; transition: transform 0.2s; }
+@media (hover: hover) { .hcard:hover .poster { transform: scale(1.04); } }
+.hcard .poster img { width: 100%; height: 100%; object-fit: cover; }
+.hcard .ptitle { font-weight: 500; font-size: 14px; margin-top: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hcard .prating { font-size: 13px; color: var(--gold); font-weight: 600; margin-top: 2px; }
+
+.grid { display: grid; gap: 24px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+@media (min-width: 768px) { .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 28px; } }
+.poster-card { cursor: pointer; }
+.poster-visual { aspect-ratio: 2/3; background: var(--field); border-radius: 16px; overflow: hidden; position: relative; box-shadow: var(--shadow); }
+.poster-visual img { width: 100%; height: 100%; object-fit: cover; }
+.poster-title { position: absolute; bottom: 0; left: 0; right: 0; padding: 16px; font-weight: 600; font-size: 15px; background: linear-gradient(transparent, rgba(0,0,0,0.65)); color: white; }
+.poster-meta { padding: 12px 0; font-size: 14px; color: var(--text-secondary); }
+
+.movie-wrap { max-width: 960px; margin: 0 auto; }
+.movie-hero { display: grid; grid-template-columns: 260px 1fr; gap: 48px; margin-bottom: 48px; }
+@media (max-width: 700px) { .movie-hero { grid-template-columns: 1fr; gap: 28px; } }
+.movie-poster { border-radius: 24px; overflow: hidden; box-shadow: var(--shadow); }
+.movie-details h1 { font-size: 36px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.5px; }
+.movie-details .meta { color: var(--text-secondary); margin-bottom: 24px; font-size: 16px; }
+.synopsis { max-width: 62ch; line-height: 1.55; font-size: 17px; }
+
+.rating-card { background: var(--surface); border-radius: 24px; padding: 32px; margin: 40px 0; border: 1px solid var(--border); box-shadow: var(--shadow); }
+.rating-num { font-size: 52px; font-weight: 600; letter-spacing: -1px; }
+.rating-num span { font-size: 20px; color: var(--text-tertiary); font-weight: 400; }
+.slider-wrap { margin: 20px 0 24px; }
+.slider-wrap input[type="range"] { width: 100%; height: 6px; accent-color: var(--accent); }
+.pill-row { display: flex; gap: 10px; margin-bottom: 20px; }
+.pill-btn { flex: 1; height: 44px; border-radius: 999px; background: var(--field); color: var(--text); font-weight: 500; font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.pill-btn.active { background: var(--accent); color: white; }
+.pill-btn.active.like { background: var(--red); }
+.pill-btn.active.watchlist { background: var(--green); }
+.review-box { width: 100%; background: var(--field); border: none; border-radius: 14px; padding: 16px; min-height: 100px; resize: none; font-size: 16px; color: var(--text); }
+.review-box::placeholder { color: var(--text-tertiary); }
+.save-row { display: flex; justify-content: flex-end; margin-top: 16px; }
+.save-btn { background: var(--accent); color: white; font-weight: 600; padding: 0 24px; height: 44px; border-radius: 999px; }
+.save-btn:disabled { background: var(--field); color: var(--text-tertiary); }
+
+.avg-ring { width: 60px; height: 60px; border-radius: 50%; border: 2px solid var(--gold); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 18px; }
+.histogram { display: flex; align-items: flex-end; gap: 4px; height: 48px; margin: 16px 0; }
+.histogram .bar { flex: 1; background: var(--text-tertiary); border-radius: 4px 4px 0 0; min-height: 3px; opacity: 0.5; }
+
+.reviews-group { background: var(--surface); border-radius: 24px; border: 1px solid var(--border); overflow: hidden; }
+.review-row { display: flex; gap: 14px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.review-row:last-child { border-bottom: none; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 16px; flex-shrink: 0; }
+.review-meta { display: flex; align-items: center; gap: 10px; }
+.review-meta strong { font-weight: 600; }
+.gold-pill { background: rgba(212,160,23,0.15); color: var(--gold); font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+.review-text { margin-top: 8px; font-size: 16px; }
+
+.community { max-width: 760px; margin: 0 auto; }
+.comm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
+.comm-header h1 { font-size: 34px; font-weight: 600; }
+.new-req { background: var(--accent); color: white; font-weight: 600; padding: 0 20px; height: 44px; border-radius: 999px; font-size: 16px; }
+.seg { display: flex; background: var(--field); border-radius: 12px; padding: 3px; margin-bottom: 16px; }
+.seg button { flex: 1; height: 36px; border-radius: 10px; font-weight: 500; font-size: 15px; }
+.seg button.active { background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.comm-search { width: 100%; background: var(--field); border: none; border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; height: 48px; }
+.req-group { background: var(--surface); border-radius: 24px; border: 1px solid var(--border); overflow: hidden; }
+.req-row { display: flex; gap: 14px; padding: 18px 20px; border-bottom: 1px solid var(--border); min-height: 96px; cursor: pointer; transition: opacity 0.2s, max-height 0.3s; }
+.req-row:last-child { border-bottom: none; }
+.req-row.removing { opacity: 0; max-height: 0; padding: 0; overflow: hidden; }
+.vote-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 40px; }
+.vote-btn { font-size: 18px; color: var(--text-tertiary); height: 32px; width: 32px; display: flex; align-items: center; justify-content: center; }
+.vote-btn.up.active { color: var(--accent); }
+.vote-btn.down.active { color: #ff9500; }
+.req-title { font-weight: 600; font-size: 17px; }
+.req-note { color: var(--text-secondary); font-size: 15px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; }
+.req-meta { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 13px; color: var(--text-tertiary); flex-wrap: wrap; }
+.status-pill { background: var(--field); padding: 3px 10px; border-radius: 999px; font-weight: 500; }
+.remove-btn { width: 32px; height: 32px; border-radius: 50%; background: var(--field); color: var(--text-secondary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.remove-btn:hover, .remove-btn:active { background: var(--red); color: white; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin: 28px 0; }
+.stat-card { background: var(--surface); border-radius: 20px; padding: 24px; text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow); }
+.stat-card .num { font-size: 28px; font-weight: 600; }
+.stat-card .lbl { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
+
+.profile-header { display: flex; gap: 24px; align-items: center; margin-bottom: 36px; }
+.profile-avatar { width: 80px; height: 80px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 600; }
+.profile-tabs { display: flex; gap: 8px; overflow-x: auto; margin: 24px 0; padding-bottom: 8px; }
+.profile-tabs button { padding: 10px 18px; border-radius: 999px; white-space: nowrap; background: var(--field); font-weight: 500; font-size: 15px; }
+.profile-tabs button.active { background: var(--accent); color: white; }
+
+.empty { text-align: center; padding: 80px 20px; color: var(--text-secondary); }
+.empty h2 { font-size: 22px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+
+.bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(16px); border-top: 1px solid var(--border); padding: 8px 0 calc(16px + env(safe-area-inset-bottom)); justify-content: space-around; }
+.bottom-nav button { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--text-tertiary); padding: 6px 14px; font-weight: 500; min-height: 48px; }
+.bottom-nav button.active { color: var(--accent); }
+.bottom-nav svg { width: 24px; height: 24px; }
+@media (max-width: 760px) { nav.desktop { display: none; } .bottom-nav { display: flex; } main { padding-bottom: calc(110px + env(safe-area-inset-bottom)); } .search-wrap { max-width: none; } header { padding: 12px 16px; padding-top: calc(12px + env(safe-area-inset-top)); } }
+
+#adminHotspot { position: fixed; bottom: 0; left: 0; width: 64px; height: 64px; opacity: 0.01; z-index: 99998; }
+#toast { position: fixed; bottom: calc(90px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 12px 20px; border-radius: 999px; font-size: 15px; font-weight: 500; z-index: 999999; opacity: 0; pointer-events: none; transition: opacity 0.2s; display: flex; align-items: center; gap: 12px; }
+#toast.show { opacity: 1; pointer-events: auto; }
+#toast .undo { background: transparent; color: var(--accent); font-weight: 600; padding: 0; min-height: auto; }
+
+#pwOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(8px); z-index: 100000; display: flex; align-items: flex-end; justify-content: center; }
+@media (min-width: 768px) { #pwOverlay { align-items: center; } }
+#pwSheet { background: var(--surface); width: 100%; max-width: 340px; border-radius: 28px 28px 0 0; padding: 36px 28px 32px; text-align: center; box-shadow: var(--shadow); animation: slideUp 0.28s ease; }
+@media (min-width: 768px) { #pwSheet { border-radius: 28px; } }
+.lock-icon { width: 56px; height: 56px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
+#pwSheet h2 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+#pwSheet p { color: var(--text-secondary); font-size: 15px; margin-bottom: 24px; }
+.pw-field { position: relative; margin-bottom: 8px; }
+.pw-field input { width: 100%; height: 52px; background: var(--field); border: none; border-radius: 14px; padding: 0 44px; text-align: center; font-size: 17px; color: var(--text); }
+.pw-field input.error { outline: 2px solid var(--red); }
+.eye-btn { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; min-height: auto; color: var(--text-tertiary); }
+.pw-error { color: var(--red); font-size: 14px; height: 20px; margin-bottom: 16px; opacity: 0; transition: opacity 0.2s; }
+.pw-error.show { opacity: 1; }
+#pwUnlock { width: 100%; height: 50px; margin-bottom: 12px; }
+#pwCancel { color: var(--text-secondary); font-weight: 500; min-height: auto; padding: 8px; }
+@keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.shake { animation: shake 0.3s; }
+
+#adminOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 99999; display: flex; align-items: flex-end; justify-content: center; }
+@media (min-width: 768px) { #adminOverlay { align-items: center; padding: 24px; } }
+#adminSheet { background: var(--surface); width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; padding: 24px 28px 40px; border-radius: 28px 28px 0 0; animation: slideUp 0.28s ease; }
+@media (min-width: 768px) { #adminSheet { border-radius: 28px; } }
+@keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+.drag-handle { width: 40px; height: 5px; background: var(--border); border-radius: 3px; margin: 0 auto 20px; }
+.admin-tabs { display: flex; gap: 3px; background: var(--field); border-radius: 12px; padding: 3px; margin-bottom: 24px; }
+.admin-tabs button { flex: 1; height: 38px; border-radius: 10px; font-weight: 500; font-size: 15px; }
+.admin-tabs button.active { background: var(--surface); }
+.form-group { background: var(--field); border-radius: 16px; padding: 6px 18px; margin-bottom: 20px; }
+.form-row { display: flex; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.form-row:last-child { border-bottom: none; }
+.form-row label { width: 110px; font-size: 16px; color: var(--text-secondary); flex-shrink: 0; }
+.form-row input, .form-row textarea { flex: 1; background: transparent; border: none; text-align: right; outline: none; color: var(--text); font-size: 16px; }
+.btn { background: var(--accent); color: white; font-weight: 600; padding: 0 22px; height: 48px; border-radius: 999px; font-size: 16px; }
+.btn.secondary { background: var(--field); color: var(--text); }
+.btn.danger { background: transparent; color: var(--red); }
+.confirm-sheet { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100001; display: flex; align-items: flex-end; justify-content: center; }
+.confirm-box { background: var(--surface); width: 100%; max-width: 400px; border-radius: 20px 20px 0 0; padding: 28px; text-align: center; }
+@media (min-width: 768px) { .confirm-sheet { align-items: center; } .confirm-box { border-radius: 20px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo" id="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12h8M8 8h5M8 16h3"/></svg>
+    Poster Board
+  </div>
+  <nav class="desktop">
+    <button data-page="home" class="active">Home</button>
+    <button data-page="browse">Films</button>
+    <button data-page="community">Community</button>
+    <button data-page="profile">Profile</button>
+  </nav>
+  <div class="search-wrap">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input type="search" id="globalSearch" placeholder="Search" autocomplete="off" aria-label="Search films">
+  </div>
+  <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+  </button>
+</header>
+
+<main id="app"></main>
+
+<nav class="bottom-nav">
+  <button data-page="home" class="active" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home</button>
+  <button data-page="browse" aria-label="Films"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>Films</button>
+  <button data-page="community" aria-label="Community"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Board</button>
+  <button data-page="profile" aria-label="Profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Profile</button>
+</nav>
+
+<footer style="text-align:center;padding:32px 16px calc(32px + env(safe-area-inset-bottom));font-size:13px;color:var(--text-tertiary);">
+  <span id="footerCopyright" style="cursor:pointer;user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;">© Poster Board</span>
+</footer>
+
+<div id="adminHotspot" aria-hidden="true"></div>
+<div id="toast"></div>
+
+<script>
+const ADMIN_HASH = "358086c1d9449922d3b4f54a27a97249a7f66b88e6169eaab82cfb851fe3963b";
+const ADMIN_PLAIN = "poster board 1234";
+
+const state = {
+  movies: [],
+  ratings: [],
+  requests: [],
+  votes: {},
+  username: localStorage.getItem("pb_username") || "",
+  bio: localStorage.getItem("pb_bio") || "",
+  joinDate: localStorage.getItem("pb_join") || new Date().toISOString(),
+  currentPage: "home",
+  currentMovieId: null,
+  adminUnlocked: sessionStorage.getItem("pb_admin") === "1",
+  failedAttempts: 0,
+  lockoutUntil: 0,
+  theme: document.documentElement.getAttribute("data-theme") || "light",
+  communitySort: "top",
+  communityFilter: "all",
+  profileTab: "overview",
+  adminTab: "dashboard",
+  expandedReq: null,
+  selectedReqs: new Set()
+};
+
+const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("pb_sync") : null;
+let saveTimer = null;
+let undoTimer = null;
+let pendingRemove = null;
+
+function showToast(msg, undoFn) {
+  const t = document.getElementById("toast");
+  t.innerHTML = msg + (undoFn ? ' <button class="undo">Undo</button>' : "");
+  t.classList.add("show");
+  clearTimeout(undoTimer);
+  if (undoFn) {
+    t.querySelector(".undo").onclick = () => { undoFn(); t.classList.remove("show"); };
+    undoTimer = setTimeout(() => { t.classList.remove("show"); if (pendingRemove) pendingRemove.finalize(); pendingRemove = null; }, 5000);
+  } else {
+    setTimeout(() => t.classList.remove("show"), 1800);
+  }
+}
+
+function confirmAction(msg, detail, onYes) {
+  const sheet = document.createElement("div");
+  sheet.className = "confirm-sheet";
+  sheet.innerHTML = `<div class="confirm-box"><p style="font-size:18px;font-weight:600;margin-bottom:8px">${escapeHtml(msg)}</p>${detail?`<p style="color:var(--text-secondary);margin-bottom:20px">${escapeHtml(detail)}</p>`:""}<div style="display:flex;gap:12px;justify-content:center"><button class="btn secondary" id="cNo">Cancel</button><button class="btn danger" id="cYes">Remove</button></div></div>`;
+  document.body.appendChild(sheet);
+  sheet.querySelector("#cNo").onclick = () => sheet.remove();
+  sheet.querySelector("#cYes").onclick = () => { sheet.remove(); onYes(); };
+  sheet.onclick = e => { if (e.target === sheet) sheet.remove(); };
+}
+
+function loadData() {
+  try {
+    state.movies = JSON.parse(localStorage.getItem("pb_movies") || "[]");
+    state.ratings = JSON.parse(localStorage.getItem("pb_ratings") || "[]");
+    state.requests = JSON.parse(localStorage.getItem("pb_requests") || "[]");
+    state.votes = JSON.parse(localStorage.getItem("pb_votes") || "{}");
+    if (!state.username) {
+      state.username = prompt("Choose a username:") || "Anonymous";
+      localStorage.setItem("pb_username", state.username);
+      localStorage.setItem("pb_join", state.joinDate);
+    }
+  } catch (e) { console.error(e); }
+}
+
+function saveAll() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem("pb_movies", JSON.stringify(state.movies));
+      localStorage.setItem("pb_ratings", JSON.stringify(state.ratings));
+      localStorage.setItem("pb_requests", JSON.stringify(state.requests));
+      localStorage.setItem("pb_votes", JSON.stringify(state.votes));
+      if (channel) channel.postMessage({ type: "update" });
+    } catch (e) {
+      showToast("Storage full. Changes not saved.");
+    }
+  }, 300);
+}
+
+function applyTheme(t) { state.theme = t; document.documentElement.setAttribute("data-theme", t); localStorage.setItem("pb_theme", t); }
+
+function formatRuntime(min) { if (!min) return ""; const h = Math.floor(min/60); const m = min%60; return h ? `${h}h ${m}m` : `${m}m`; }
+function getMovie(id) { return state.movies.find(m => m.id === id); }
+function getRatingsFor(movieId) { return state.ratings.filter(r => r.movieId === movieId); }
+function avgRating(movieId) { const rs = getRatingsFor(movieId); if (!rs.length) return null; return (rs.reduce((s,r)=>s+Number(r.rating),0)/rs.length).toFixed(1); }
+function userRating(movieId) { return state.ratings.find(r => r.movieId === movieId && r.username === state.username); }
+function escapeHtml(s) { return String(s||"").replace(/[&<>"']/g, c => ({'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'}[c])); }
+function timeAgo(ts) { const d = Date.now()-ts; if (d<60000) return "now"; if (d<3600000) return Math.floor(d/60000)+"m"; if (d<86400000) return Math.floor(d/3600000)+"h"; return Math.floor(d/86400000)+"d"; }
+
+async function simpleHash(str) { let h = 0; for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0; return Math.abs(h).toString(16).padStart(16, "0"); }
+async function hashPassword(pw) {
+  const normalized = pw.trim().toLowerCase();
+  if (window.crypto && crypto.subtle && location.protocol !== "file:") {
+    try { const data = new TextEncoder().encode(normalized); const buf = await crypto.subtle.digest("SHA-256", data); return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join(""); }
+    catch(e) {}
+  }
+  return simpleHash(normalized);
+}
+
+function posterHtml(m) {
+  if (m.poster) return `<div class="poster-visual"><img src="${m.poster}" alt="${escapeHtml(m.title)}"></div>`;
+  return `<div class="poster-visual"><div class="poster-title">${escapeHtml(m.title)}</div></div>`;
+}
+function hcardHtml(m) {
+  if (!m) return "";
+  const avg = avgRating(m.id);
+  return `<div class="hcard" data-id="${m.id}"><div class="poster">${m.poster?`<img src="${m.poster}" alt="">`:`<div class="poster-title" style="position:static;background:none;color:var(--text);padding:24px 8px;text-align:center">${escapeHtml(m.title)}</div>`}</div><div class="ptitle">${escapeHtml(m.title)}</div>${avg?`<div class="prating">${avg}</div>`:""}</div>`;
+}
+function bindCards() {
+  document.querySelectorAll("[data-id]").forEach(el => {
+    el.onclick = () => { state.currentMovieId = +el.dataset.id; state.currentPage = "movie"; render(); window.scrollTo(0,0); };
+  });
+}
+function emptyState(title, msg) { return `<div class="empty"><h2>${title}</h2>${msg?`<p>${msg}</p>`:""}</div>`; }
+
+function render() {
+  const app = document.getElementById("app");
+  document.querySelectorAll("[data-page]").forEach(b => b.classList.toggle("active", b.dataset.page === state.currentPage));
+  if (state.currentPage === "home") renderHome(app);
+  else if (state.currentPage === "browse") renderBrowse(app);
+  else if (state.currentPage === "movie") renderMovie(app);
+  else if (state.currentPage === "profile") renderProfile(app);
+  else if (state.currentPage === "community") renderCommunity(app);
+  else if (state.currentPage === "admin") renderAdmin();
+}
+
+function renderHome(app) {
+  if (!state.movies.length) { app.innerHTML = emptyState("No movies yet", "Add films from the admin panel."); return; }
+  const recent = [...state.movies].sort((a,b)=>(b.id||0)-(a.id||0)).slice(0,12);
+  const watched = state.ratings.filter(r=>r.username===state.username && r.watched).slice(0,12);
+  app.innerHTML = `
+    ${recent.length ? `<div class="section-header"><div class="section-title">Recently added</div></div><div class="hscroll">${recent.map(hcardHtml).join("")}</div>` : ""}
+    ${watched.length ? `<div class="section-header"><div class="section-title">Recently watched</div></div><div class="hscroll">${watched.map(r=>hcardHtml(getMovie(r.movieId))).filter(Boolean).join("")}</div>` : ""}
+  `;
+  bindCards();
+}
+
+function renderBrowse(app) {
+  if (!state.movies.length) { app.innerHTML = emptyState("No movies yet", ""); return; }
+  const q = (document.getElementById("globalSearch").value || "").toLowerCase();
+  let list = state.movies.filter(m => !q || m.title.toLowerCase().includes(q) || (m.genres||"").toLowerCase().includes(q));
+  const year = document.getElementById("fYear")?.value || "all";
+  const genre = document.getElementById("fGenre")?.value || "all";
+  const sort = document.getElementById("fSort")?.value || "title";
+  if (year !== "all") list = list.filter(m => String(m.year) === year);
+  if (genre !== "all") list = list.filter(m => (m.genres||"").toLowerCase().includes(genre.toLowerCase()));
+  if (sort === "rating") list.sort((a,b)=>(avgRating(b.id)||0)-(avgRating(a.id)||0));
+  else if (sort === "year") list.sort((a,b)=>b.year-a.year);
+  else if (sort === "rated") list.sort((a,b)=>getRatingsFor(b.id).length-getRatingsFor(a.id).length);
+  else list.sort((a,b)=>a.title.localeCompare(b.title));
+  const years = [...new Set(state.movies.map(m=>m.year))].sort((a,b)=>b-a);
+  const genres = [...new Set(state.movies.flatMap(m=>(m.genres||"").split(",").map(g=>g.trim()).filter(Boolean)))].sort();
+  app.innerHTML = `
+    <div class="section-header"><div class="section-title">Films</div></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px">
+      <select id="fYear" aria-label="Filter by year" style="background:var(--field);border:none;border-radius:12px;padding:10px 14px;height:44px"><option value="all">Year</option>${years.map(y=>`<option value="${y}">${y}</option>`).join("")}</select>
+      <select id="fGenre" aria-label="Filter by genre" style="background:var(--field);border:none;border-radius:12px;padding:10px 14px;height:44px"><option value="all">Genre</option>${genres.map(g=>`<option>${escapeHtml(g)}</option>`).join("")}</select>
+      <select id="fSort" aria-label="Sort" style="background:var(--field);border:none;border-radius:12px;padding:10px 14px;height:44px"><option value="title">Title</option><option value="year">Year</option><option value="rating">Rating</option><option value="rated">Most rated</option></select>
+    </div>
+    <div class="grid">${list.length ? list.map(m=>`<div class="poster-card" data-id="${m.id}">${posterHtml(m)}<div class="poster-meta">${m.year}</div></div>`).join("") : "<p style='color:var(--text-secondary)'>No matches.</p>"}</div>
+  `;
+  document.getElementById("fYear").value = year;
+  document.getElementById("fGenre").value = genre;
+  document.getElementById("fSort").value = sort;
+  ["fYear","fGenre","fSort"].forEach(id => document.getElementById(id).onchange = render);
+  bindCards();
+}
+
+function renderMovie(app) {
+  const m = getMovie(state.currentMovieId);
+  if (!m) { state.currentPage = "browse"; return render(); }
+  const rs = getRatingsFor(m.id);
+  const avg = avgRating(m.id);
+  const ur = userRating(m.id);
+  const dist = Array(10).fill(0);
+  rs.forEach(r => { const bin = Math.min(9, Math.max(0, Math.floor(Number(r.rating))-1)); dist[bin]++; });
+  const max = Math.max(1, ...dist);
+  app.innerHTML = `
+    <div class="movie-wrap">
+      <div class="movie-hero">
+        <div class="movie-poster">${posterHtml(m)}</div>
+        <div class="movie-details">
+          <h1>${escapeHtml(m.title)}</h1>
+          <div class="meta">${m.year}${m.runtime ? ` · ${formatRuntime(m.runtime)}` : ""}${m.genres ? ` · ${escapeHtml(m.genres)}` : ""}</div>
+          ${avg ? `<div style="display:flex;align-items:center;gap:14px;margin-bottom:20px"><div class="avg-ring">${avg}</div><span style="color:var(--text-secondary);font-size:15px">${rs.length} rating${rs.length!==1?"s":""}</span></div>` : ""}
+          <div class="histogram">${dist.map(c=>`<div class="bar" style="height:${(c/max)*100}%"></div>`).join("")}</div>
+          <p class="synopsis">${escapeHtml(m.description || "")}</p>
+          ${m.director ? `<div style="margin-top:20px;font-size:15px;color:var(--text-secondary)">Director ${escapeHtml(m.director)}</div>` : ""}
+          ${m.cast ? `<div style="font-size:15px;color:var(--text-secondary)">Cast ${escapeHtml(m.cast)}</div>` : ""}
+        </div>
+      </div>
+      <div class="rating-card">
+        <div class="rating-num" id="ratingDisplay">${ur ? Number(ur.rating).toFixed(1) : "—"}<span> /10</span></div>
+        <div class="slider-wrap"><input type="range" id="rateSlider" min="1" max="10" step="0.1" value="${ur ? ur.rating : 7}" aria-label="Rating"></div>
+        <div class="pill-row">
+          <button class="pill-btn ${ur?.watched?"active":""}" id="rateWatched">Watched</button>
+          <button class="pill-btn like ${ur?.liked?"active":""}" id="rateLiked">Like</button>
+          <button class="pill-btn watchlist ${ur?.watchlist?"active":""}" id="rateWatchlist">Watchlist</button>
+        </div>
+        <textarea class="review-box" id="rateReview" placeholder="Add a review" aria-label="Review">${ur ? escapeHtml(ur.review||"") : ""}</textarea>
+        <div class="save-row"><button class="save-btn" id="rateSave" disabled>Save</button></div>
+      </div>
+      ${rs.length ? `<div class="reviews-group">${rs.map(r => `
+        <div class="review-row">
+          <div class="avatar">${(r.username||"?").charAt(0).toUpperCase()}</div>
+          <div style="flex:1">
+            <div class="review-meta"><strong>${escapeHtml(r.username)}</strong><span class="gold-pill">${Number(r.rating).toFixed(1)}</span><span style="margin-left:auto;font-size:14px;color:var(--text-tertiary)">${new Date(r.timestamp).toLocaleDateString()}</span></div>
+            ${r.review ? `<div class="review-text">${escapeHtml(r.review)}</div>` : ""}
+          </div>
+        </div>
+      `).join("")}</div>` : ""}
+    </div>
+  `;
+  const slider = document.getElementById("rateSlider");
+  const display = document.getElementById("ratingDisplay");
+  const saveBtn = document.getElementById("rateSave");
+  const markDirty = () => { saveBtn.disabled = false; };
+  slider.oninput = () => { display.innerHTML = (+slider.value).toFixed(1) + "<span> /10</span>"; markDirty(); };
+  document.getElementById("rateWatched").onclick = function() { this.classList.toggle("active"); markDirty(); };
+  document.getElementById("rateLiked").onclick = function() { this.classList.toggle("active"); markDirty(); };
+  document.getElementById("rateWatchlist").onclick = function() { this.classList.toggle("active"); markDirty(); };
+  document.getElementById("rateReview").oninput = markDirty;
+  saveBtn.onclick = () => {
+    const rating = +slider.value;
+    const existing = state.ratings.findIndex(r => r.movieId === m.id && r.username === state.username);
+    const entry = {
+      id: existing >= 0 ? state.ratings[existing].id : Date.now(),
+      movieId: m.id, username: state.username, rating,
+      review: document.getElementById("rateReview").value.trim(),
+      liked: document.getElementById("rateLiked").classList.contains("active"),
+      watched: document.getElementById("rateWatched").classList.contains("active"),
+      watchlist: document.getElementById("rateWatchlist").classList.contains("active"),
+      watchDate: new Date().toISOString().slice(0,10),
+      timestamp: Date.now()
+    };
+    if (existing >= 0) state.ratings[existing] = entry; else state.ratings.push(entry);
+    saveAll();
+    saveBtn.textContent = "Saved";
+    saveBtn.disabled = true;
+    setTimeout(() => { saveBtn.textContent = "Save"; }, 1400);
+    showToast("Saved");
+    render();
+  };
+}
+
+function renderProfile(app) {
+  const mine = state.ratings.filter(r => r.username === state.username);
+  const watched = mine.filter(r => r.watched);
+  const liked = mine.filter(r => r.liked);
+  const watchlist = mine.filter(r => r.watchlist);
+  const hours = watched.reduce((s,r) => s + (getMovie(r.movieId)?.runtime||0), 0) / 60;
+  const avg = mine.length ? (mine.reduce((s,r)=>s+Number(r.rating),0)/mine.length).toFixed(1) : "—";
+  app.innerHTML = `
+    <div class="profile-header">
+      <div class="profile-avatar">${(state.username||"?").charAt(0).toUpperCase()}</div>
+      <div>
+        <h1 style="font-size:28px;font-weight:600">${escapeHtml(state.username)}</h1>
+        <p style="color:var(--text-secondary);font-size:15px;margin-top:4px">${state.bio || ""}</p>
+        <p style="color:var(--text-tertiary);font-size:14px">Joined ${new Date(state.joinDate).toLocaleDateString()}</p>
+        <button class="btn secondary" style="margin-top:12px;height:36px;font-size:15px" id="editProfile">Edit</button>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat-card"><div class="num">${watched.length}</div><div class="lbl">Watched</div></div>
+      <div class="stat-card"><div class="num">${hours.toFixed(0)}</div><div class="lbl">Hours</div></div>
+      <div class="stat-card"><div class="num">${avg}</div><div class="lbl">Average</div></div>
+      <div class="stat-card"><div class="num">${mine.filter(r=>r.review).length}</div><div class="lbl">Reviews</div></div>
+      <div class="stat-card"><div class="num">${liked.length}</div><div class="lbl">Likes</div></div>
+      <div class="stat-card"><div class="num">${watchlist.length}</div><div class="lbl">Watchlist</div></div>
+    </div>
+    <div class="profile-tabs">
+      <button data-ptab="overview" class="${state.profileTab==="overview"?"active":""}">Overview</button>
+      <button data-ptab="diary" class="${state.profileTab==="diary"?"active":""}">Diary</button>
+      <button data-ptab="watched" class="${state.profileTab==="watched"?"active":""}">Watched</button>
+      <button data-ptab="watchlist" class="${state.profileTab==="watchlist"?"active":""}">Watchlist</button>
+      <button data-ptab="likes" class="${state.profileTab==="likes"?"active":""}">Likes</button>
+      <button data-ptab="reviews" class="${state.profileTab==="reviews"?"active":""}">Reviews</button>
+    </div>
+    <div id="profileContent"></div>
+  `;
+  document.querySelectorAll("[data-ptab]").forEach(b => b.onclick = () => { state.profileTab = b.dataset.ptab; render(); });
+  document.getElementById("editProfile").onclick = () => {
+    const n = prompt("Username", state.username); if (n) { state.username = n; localStorage.setItem("pb_username", n); }
+    const b = prompt("Bio", state.bio); if (b !== null) { state.bio = b; localStorage.setItem("pb_bio", b); }
+    render();
+  };
+  const pc = document.getElementById("profileContent");
+  if (state.profileTab === "overview") {
+    pc.innerHTML = watched.length ? `<div class="section-header"><div class="section-title">Recently watched</div></div><div class="hscroll">${watched.slice(0,10).map(r=>hcardHtml(getMovie(r.movieId))).filter(Boolean).join("")}</div>` : emptyState("Nothing yet","");
+  } else if (state.profileTab === "watched") {
+    pc.innerHTML = watched.length ? `<div class="hscroll">${watched.map(r=>hcardHtml(getMovie(r.movieId))).filter(Boolean).join("")}</div>` : emptyState("Nothing watched","");
+  } else if (state.profileTab === "watchlist") {
+    pc.innerHTML = watchlist.length ? `<div class="hscroll">${watchlist.map(r=>hcardHtml(getMovie(r.movieId))).filter(Boolean).join("")}</div>` : emptyState("Empty","");
+  } else if (state.profileTab === "likes") {
+    pc.innerHTML = liked.length ? `<div class="hscroll">${liked.map(r=>hcardHtml(getMovie(r.movieId))).filter(Boolean).join("")}</div>` : emptyState("No likes","");
+  } else if (state.profileTab === "reviews") {
+    pc.innerHTML = mine.filter(r=>r.review).length ? `<div class="reviews-group">${mine.filter(r=>r.review).map(r => `<div class="review-row"><div class="avatar">${(state.username||"?").charAt(0).toUpperCase()}</div><div style="flex:1"><div class="review-meta"><strong>${escapeHtml(getMovie(r.movieId)?.title||"")}</strong><span class="gold-pill">${Number(r.rating).toFixed(1)}</span></div><div class="review-text">${escapeHtml(r.review)}</div></div></div>`).join("")}</div>` : emptyState("No reviews","");
+  } else if (state.profileTab === "diary") {
+    const byMonth = {};
+    watched.forEach(r => { const d = (r.watchDate || new Date(r.timestamp).toISOString()).slice(0,7); byMonth[d] = byMonth[d]||[]; byMonth[d].push(r); });
+    pc.innerHTML = Object.keys(byMonth).sort().reverse().map(m => `<div class="section-header"><div class="section-title">${m}</div></div><div class="hscroll">${byMonth[m].map(r=>hcardHtml(getMovie(r.movieId))).filter(Boolean).join("")}</div>`).join("") || emptyState("No diary","");
+  }
+  bindCards();
+}
+
+function renderCommunity(app) {
+  let list = [...state.requests];
+  if (state.communityFilter !== "all") list = list.filter(r => (r.status||"Requested") === state.communityFilter);
+  const q = (document.getElementById("commSearch")?.value || "").toLowerCase();
+  if (q) list = list.filter(r => r.title.toLowerCase().includes(q));
+  if (state.communitySort === "top") list.sort((a,b) => ((state.votes[b.id] ? Object.values(state.votes[b.id]).reduce((s,v)=>s+v,0) : 0) - (state.votes[a.id] ? Object.values(state.votes[a.id]).reduce((s,v)=>s+v,0) : 0)));
+  else if (state.communitySort === "new") list.sort((a,b) => b.timestamp - a.timestamp);
+  else list.sort((a,b) => (b.timestamp - a.timestamp)/1000 + (state.votes[b.id] ? Object.values(state.votes[b.id]).reduce((s,v)=>s+v,0) : 0));
+  const top = [...state.requests].sort((a,b) => ((state.votes[b.id] ? Object.values(state.votes[b.id]).reduce((s,v)=>s+v,0) : 0) - (state.votes[a.id] ? Object.values(state.votes[a.id]).reduce((s,v)=>s+v,0) : 0))).slice(0,3);
+  app.innerHTML = `
+    <div class="community">
+      <div class="comm-header"><h1>Community</h1><button class="new-req" id="newReq">New Request</button></div>
+      ${top.length ? `<div class="section-header" style="margin-top:0"><div class="section-title">Most wanted</div></div><div style="display:flex;gap:12px;overflow-x:auto;margin-bottom:28px">${top.map(r=>`<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px;min-width:180px"><strong>${escapeHtml(r.title)}</strong><div style="color:var(--text-secondary);font-size:14px;margin-top:4px">${state.votes[r.id]?Object.values(state.votes[r.id]).reduce((s,v)=>s+v,0):0} votes</div></div>`).join("")}</div>` : ""}
+      <div class="seg">
+        <button data-csort="top" class="${state.communitySort==="top"?"active":""}">Top</button>
+        <button data-csort="new" class="${state.communitySort==="new"?"active":""}">New</button>
+        <button data-csort="trending" class="${state.communitySort==="trending"?"active":""}">Trending</button>
+      </div>
+      <input class="comm-search" id="commSearch" placeholder="Search" value="${q}" aria-label="Search requests">
+      ${list.length ? `<div class="req-group">${list.map(r => {
+        const score = state.votes[r.id] ? Object.values(state.votes[r.id]).reduce((s,v)=>s+v,0) : 0;
+        const myVote = state.votes[r.id]?.[state.username] || 0;
+        const open = state.expandedReq === r.id;
+        return `<div class="req-row" data-req="${r.id}">
+          <div class="vote-col">
+            <button class="vote-btn up ${myVote===1?"active":""}" data-vote="${r.id}" data-dir="1" aria-label="Upvote">▲</button>
+            <span style="font-weight:600;font-size:15px">${score}</span>
+            <button class="vote-btn down ${myVote===-1?"active":""}" data-vote="${r.id}" data-dir="-1" aria-label="Downvote">▼</button>
+          </div>
+          <div style="flex:1">
+            <div class="req-title">${escapeHtml(r.title)}</div>
+            ${r.note ? `<div class="req-note">${escapeHtml(r.note)}</div>` : ""}
+            <div class="req-meta"><span class="status-pill">${r.status||"Requested"}</span><span>${escapeHtml(r.username)}</span><span class="time" data-ts="${r.timestamp}">${timeAgo(r.timestamp)}</span><span>${(r.comments||[]).length} comments</span></div>
+            ${open ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">${(r.comments||[]).map((c,i)=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px"><div style="font-size:15px"><strong>${escapeHtml(c.user)}</strong> ${escapeHtml(c.text)}</div>${state.adminUnlocked?`<button class="remove-btn" data-rmcomment="${r.id}" data-idx="${i}" aria-label="Remove comment">×</button>`:""}</div>`).join("")}<input style="width:100%;background:var(--field);border:none;border-radius:12px;padding:10px 14px;margin-top:10px;height:44px" placeholder="Add a comment" data-comment="${r.id}" aria-label="Comment"></div>` : ""}
+            ${state.adminUnlocked ? `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn secondary" style="height:36px;font-size:14px" data-approve="${r.id}">Approve</button><button class="btn secondary" style="height:36px;font-size:14px" data-decline="${r.id}">Decline</button><button class="btn" style="height:36px;font-size:14px" data-add="${r.id}">Add movie</button><button class="remove-btn" data-rmreq="${r.id}" aria-label="Remove">×</button></div>` : ""}
+          </div>
+        </div>`;
+      }).join("")}</div>` : emptyState("No requests", "")}
+    </div>
+  `;
+  document.getElementById("newReq").onclick = () => {
+    const title = prompt("Film title"); if (!title) return;
+    const note = prompt("Note (optional)") || "";
+    state.requests.push({ id: Date.now(), title, note, username: state.username, comments: [], status: "Requested", timestamp: Date.now() });
+    saveAll(); render();
+  };
+  document.querySelectorAll("[data-csort]").forEach(b => b.onclick = () => { state.communitySort = b.dataset.csort; render(); });
+  document.getElementById("commSearch").oninput = render;
+  document.querySelectorAll("[data-vote]").forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const id = +b.dataset.vote; const dir = +b.dataset.dir;
+    if (!state.votes[id]) state.votes[id] = {};
+    if (state.votes[id][state.username] === dir) delete state.votes[id][state.username]; else state.votes[id][state.username] = dir;
+    saveAll(); render();
+  });
+  document.querySelectorAll("[data-req]").forEach(row => row.onclick = e => {
+    if (e.target.closest("[data-vote],[data-comment],[data-approve],[data-decline],[data-add],[data-rmreq],[data-rmcomment]")) return;
+    const id = +row.dataset.req;
+    state.expandedReq = state.expandedReq === id ? null : id;
+    render();
+  });
+  document.querySelectorAll("[data-comment]").forEach(inp => inp.onkeydown = e => {
+    if (e.key === "Enter" && inp.value.trim()) {
+      const r = state.requests.find(x => x.id == inp.dataset.comment);
+      if (r) { (r.comments = r.comments || []).push({ user: state.username, text: inp.value.trim() }); saveAll(); render(); }
+    }
+  });
+  if (state.adminUnlocked) {
+    document.querySelectorAll("[data-approve]").forEach(b => b.onclick = e => { e.stopPropagation(); const r = state.requests.find(x=>x.id==b.dataset.approve); if(r){r.status="Approved"; saveAll(); render();} });
+    document.querySelectorAll("[data-decline]").forEach(b => b.onclick = e => { e.stopPropagation(); const r = state.requests.find(x=>x.id==b.dataset.decline); if(r){r.status="Declined"; saveAll(); render();} });
+    document.querySelectorAll("[data-add]").forEach(b => b.onclick = e => { e.stopPropagation(); const r = state.requests.find(x=>x.id==b.dataset.add); if(r){ state.currentPage="admin"; render(); setTimeout(()=>{ const t=document.getElementById("admTitle"); if(t)t.value=r.title; },60); } });
+    document.querySelectorAll("[data-rmreq]").forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const id = +b.dataset.rmreq;
+      confirmAction("Remove this post?", "Votes and comments will be removed too.", () => {
+        const idx = state.requests.findIndex(x => x.id === id);
+        if (idx < 0) return;
+        const removed = state.requests.splice(idx, 1)[0];
+        const oldVotes = state.votes[id];
+        delete state.votes[id];
+        saveAll();
+        render();
+        pendingRemove = { finalize: () => {} };
+        showToast("Removed", () => {
+          state.requests.splice(idx, 0, removed);
+          if (oldVotes) state.votes[id] = oldVotes;
+          saveAll(); render();
+        });
+      });
+    });
+    document.querySelectorAll("[data-rmcomment]").forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const rid = +b.dataset.rmcomment; const idx = +b.dataset.idx;
+      confirmAction("Remove this comment?", "", () => {
+        const r = state.requests.find(x => x.id === rid);
+        if (!r || !r.comments) return;
+        const removed = r.comments.splice(idx, 1)[0];
+        saveAll(); render();
+        showToast("Removed", () => { r.comments.splice(idx, 0, removed); saveAll(); render(); });
+      });
+    });
+  }
+}
+
+function renderAdmin() {
+  document.querySelectorAll("#adminOverlay").forEach(el => el.remove());
+  if (!state.adminUnlocked) { openAdmin(); return; }
+  const overlay = document.createElement("div");
+  overlay.id = "adminOverlay";
+  overlay.innerHTML = `
+    <div id="adminSheet">
+      <div class="drag-handle"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <div style="font-size:22px;font-weight:600">Admin</div>
+        <button class="btn secondary" id="adminClose" style="height:36px">Close</button>
+      </div>
+      <div class="admin-tabs">
+        <button data-atab="dashboard" class="${state.adminTab==="dashboard"?"active":""}">Dashboard</button>
+        <button data-atab="movies" class="${state.adminTab==="movies"?"active":""}">Movies</button>
+        <button data-atab="requests" class="${state.adminTab==="requests"?"active":""}">Requests</button>
+        <button data-atab="settings" class="${state.adminTab==="settings"?"active":""}">Settings</button>
+      </div>
+      <div id="adminContent"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("adminClose").onclick = () => { overlay.remove(); state.currentPage = "home"; render(); };
+  overlay.onclick = e => { if (e.target === overlay) { overlay.remove(); state.currentPage = "home"; render(); } };
+  document.querySelectorAll("[data-atab]").forEach(b => b.onclick = () => { state.adminTab = b.dataset.atab; renderAdmin(); });
+  const ac = document.getElementById("adminContent");
+  if (state.adminTab === "dashboard") {
+    ac.innerHTML = `
+      <div class="stats">
+        <div class="stat-card"><div class="num">${state.movies.length}</div><div class="lbl">Movies</div></div>
+        <div class="stat-card"><div class="num">${state.ratings.length}</div><div class="lbl">Ratings</div></div>
+        <div class="stat-card"><div class="num">${state.requests.filter(r=>r.status==="Requested").length}</div><div class="lbl">Pending</div></div>
+        <div class="stat-card"><div class="num">${Object.values(state.votes).reduce((s,v)=>s+Object.keys(v).length,0)}</div><div class="lbl">Votes</div></div>
+      </div>
+    `;
+  } else if (state.adminTab === "movies") {
+    ac.innerHTML = `
+      <div class="form-group">
+        <div class="form-row"><label>Title</label><input type="text" id="admTitle"></div>
+        <div class="form-row"><label>Year</label><input type="number" id="admYear"></div>
+        <div class="form-row"><label>Runtime</label><input type="number" id="admRuntime" placeholder="min"></div>
+        <div class="form-row"><label>Genres</label><input type="text" id="admGenres"></div>
+      </div>
+      <div class="form-group">
+        <div class="form-row" style="flex-direction:column;align-items:stretch"><label style="width:auto;margin-bottom:8px">Description</label><textarea id="admDescription" style="text-align:left;min-height:90px"></textarea></div>
+        <div class="form-row"><label>Director</label><input type="text" id="admDirector"></div>
+        <div class="form-row"><label>Cast</label><input type="text" id="admCast"></div>
+      </div>
+      <div class="form-group">
+        <div class="form-row" style="flex-direction:column;align-items:stretch"><label style="width:auto">Poster</label><input type="file" id="admFile" accept="image/*" style="margin-top:8px"><input type="url" id="admPosterUrl" placeholder="or paste URL" style="margin-top:8px;text-align:left"><img id="admPreview" style="width:110px;border-radius:12px;margin-top:10px;display:none" alt="Preview"></div>
+      </div>
+      <button class="btn" id="admSave" style="width:100%">Save movie</button>
+      <div style="margin-top:28px">${state.movies.map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--border)"><span>${escapeHtml(m.title)} (${m.year})</span><span style="display:flex;gap:8px"><button class="btn secondary" style="height:36px;font-size:14px" data-edit="${m.id}">Edit</button><button class="btn danger" style="height:36px;font-size:14px" data-del="${m.id}">Delete</button></span></div>`).join("")}</div>
+    `;
+    document.getElementById("admSave").onclick = async () => {
+      const title = document.getElementById("admTitle").value.trim();
+      const year = +document.getElementById("admYear").value;
+      if (!title || !year) return alert("Title and year required");
+      if (state.movies.some(m => m.title.toLowerCase()===title.toLowerCase() && m.year===year && m.id!==window._editingId)) return alert("Duplicate");
+      let poster = document.getElementById("admPosterUrl").value.trim();
+      if (document.getElementById("admFile").files[0]) poster = await resizeImage(document.getElementById("admFile").files[0]);
+      const movie = { id: window._editingId||Date.now(), title, year, genres: document.getElementById("admGenres").value.trim(), runtime: +document.getElementById("admRuntime").value||0, description: document.getElementById("admDescription").value.trim(), director: document.getElementById("admDirector").value.trim(), cast: document.getElementById("admCast").value.trim(), poster };
+      if (window._editingId) { const i = state.movies.findIndex(m=>m.id===window._editingId); if(i>=0) state.movies[i]=movie; } else state.movies.push(movie);
+      saveAll(); window._editingId = null; showToast("Saved"); renderAdmin();
+    };
+    document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => {
+      const m = getMovie(+b.dataset.edit); if(!m) return; window._editingId = m.id;
+      document.getElementById("admTitle").value = m.title; document.getElementById("admYear").value = m.year;
+      document.getElementById("admRuntime").value = m.runtime||""; document.getElementById("admGenres").value = m.genres||"";
+      document.getElementById("admDescription").value = m.description||""; document.getElementById("admDirector").value = m.director||"";
+      document.getElementById("admCast").value = m.cast||"";
+    });
+    document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => {
+      confirmAction("Delete this movie?", "", () => { state.movies=state.movies.filter(m=>m.id!==+b.dataset.del); saveAll(); renderAdmin(); });
+    });
+    document.getElementById("admFile").onchange = async e => { const f=e.target.files[0]; if(f){ const url=await resizeImage(f); const img=document.getElementById("admPreview"); img.src=url; img.style.display="block"; } };
+  } else if (state.adminTab === "requests") {
+    const q = (document.getElementById("admReqSearch")?.value || "").toLowerCase();
+    let list = state.requests.filter(r => !q || r.title.toLowerCase().includes(q));
+    ac.innerHTML = `
+      <div style="display:flex;gap:10px;margin-bottom:16px;align-items:center">
+        <input id="admReqSearch" placeholder="Search requests" style="flex:1;background:var(--field);border:none;border-radius:12px;padding:10px 14px;height:44px" value="${q}">
+        <button class="btn danger" id="rmSelected" style="height:44px">Remove selected</button>
+      </div>
+      ${list.length ? `<div class="req-group">${list.map(r=>`<div class="req-row" style="cursor:default"><input type="checkbox" data-sel="${r.id}" ${state.selectedReqs.has(r.id)?"checked":""} style="margin-right:10px"><div style="flex:1"><div class="req-title">${escapeHtml(r.title)}</div><div class="req-meta"><span class="status-pill">${r.status||"Requested"}</span></div><div style="margin-top:10px;display:flex;gap:8px"><button class="btn secondary" style="height:34px;font-size:13px" data-st="${r.id}" data-s="Approved">Approve</button><button class="btn secondary" style="height:34px;font-size:13px" data-st="${r.id}" data-s="Declined">Decline</button><button class="btn secondary" style="height:34px;font-size:13px" data-st="${r.id}" data-s="Added">Added</button><button class="remove-btn" data-rmreq="${r.id}">×</button></div></div></div>`).join("")}</div>` : emptyState("None","")}
+    `;
+    document.getElementById("admReqSearch").oninput = renderAdmin;
+    document.querySelectorAll("[data-sel]").forEach(cb => cb.onchange = () => { if(cb.checked) state.selectedReqs.add(+cb.dataset.sel); else state.selectedReqs.delete(+cb.dataset.sel); });
+    document.getElementById("rmSelected").onclick = () => {
+      if (!state.selectedReqs.size) return;
+      confirmAction(`Remove ${state.selectedReqs.size} posts?`, "This cannot be undone.", () => {
+        state.requests = state.requests.filter(r => !state.selectedReqs.has(r.id));
+        state.selectedReqs.forEach(id => delete state.votes[id]);
+        state.selectedReqs.clear();
+        saveAll(); renderAdmin();
+      });
+    };
+    document.querySelectorAll("[data-st]").forEach(b => b.onclick = () => { const r=state.requests.find(x=>x.id==b.dataset.st); if(r){r.status=b.dataset.s; saveAll(); renderAdmin();} });
+    document.querySelectorAll("[data-rmreq]").forEach(b => b.onclick = () => {
+      const id = +b.dataset.rmreq;
+      confirmAction("Remove this post?", "Votes and comments will be removed too.", () => {
+        state.requests = state.requests.filter(r => r.id !== id);
+        delete state.votes[id];
+        saveAll(); renderAdmin();
+      });
+    });
+  } else if (state.adminTab === "settings") {
+    ac.innerHTML = `
+      <button class="btn" id="admExport" style="width:100%;margin-bottom:14px">Export</button>
+      <label class="btn secondary" style="display:block;text-align:center;line-height:48px;margin-bottom:14px">Import <input type="file" id="admImport" accept=".json" hidden></label>
+      <button class="btn danger" id="logout" style="width:100%">Log out</button>
+    `;
+    document.getElementById("admExport").onclick = () => { const blob = new Blob([JSON.stringify({movies:state.movies,ratings:state.ratings,requests:state.requests,votes:state.votes},null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="backup.json"; a.click(); };
+    document.getElementById("logout").onclick = () => { state.adminUnlocked=false; sessionStorage.removeItem("pb_admin"); overlay.remove(); state.currentPage="home"; render(); };
+    document.getElementById("admImport").onchange = e => { const f=e.target.files[0]; if(!f)return; const reader=new FileReader(); reader.onload=ev=>{ try{ const d=JSON.parse(ev.target.result); if(d.movies)state.movies=d.movies; if(d.ratings)state.ratings=d.ratings; if(d.requests)state.requests=d.requests; if(d.votes)state.votes=d.votes; saveAll(); showToast("Imported"); renderAdmin(); }catch{alert("Invalid");} }; reader.readAsText(f); };
+  }
+}
+
+function resizeImage(file) {
+  return new Promise(resolve => {
+    const img = new Image(); const reader = new FileReader();
+    reader.onload = e => { img.onload = () => { const c=document.createElement("canvas"); let w=img.width,h=img.height; const r=Math.min(400/w,600/h,1); w=Math.round(w*r); h=Math.round(h*r); c.width=w; c.height=h; c.getContext("2d").drawImage(img,0,0,w,h); resolve(c.toDataURL("image/jpeg",0.72)); }; img.src=e.target.result; };
+    reader.readAsDataURL(file);
+  });
+}
+
+function openPasswordSheet() {
+  document.querySelectorAll("#pwOverlay").forEach(el => el.remove());
+  const overlay = document.createElement("div");
+  overlay.id = "pwOverlay";
+  overlay.innerHTML = `
+    <div id="pwSheet">
+      <div class="lock-icon" id="lockIcon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </div>
+      <h2>Admin</h2>
+      <p>Enter password</p>
+      <div class="pw-field">
+        <input type="password" id="pwInput" placeholder="Password" autofocus autocomplete="off">
+        <button class="eye-btn" id="pwEye" aria-label="Show password">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <div class="pw-error" id="pwError"></div>
+      <button class="btn" id="pwUnlock">Unlock</button>
+      <button id="pwCancel">Cancel</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = document.getElementById("pwInput");
+  const err = document.getElementById("pwError");
+  const unlock = document.getElementById("pwUnlock");
+  document.getElementById("pwCancel").onclick = () => overlay.remove();
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.getElementById("pwEye").onclick = () => {
+    input.type = input.type === "password" ? "text" : "password";
+  };
+  async function tryUnlock() {
+    if (Date.now() < state.lockoutUntil) return;
+    const pw = input.value;
+    if (!pw) return;
+    const hash = await hashPassword(pw);
+    const expected = (window.crypto && crypto.subtle && location.protocol !== "file:") ? ADMIN_HASH : await simpleHash(ADMIN_PLAIN.toLowerCase());
+    if (hash === expected || pw.trim().toLowerCase() === ADMIN_PLAIN.toLowerCase()) {
+      state.adminUnlocked = true;
+      sessionStorage.setItem("pb_admin","1");
+      state.failedAttempts = 0;
+      document.getElementById("lockIcon").innerHTML = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 13l4 4L19 7"/></svg>`;
+      setTimeout(() => { overlay.remove(); state.currentPage = "admin"; renderAdmin(); }, 400);
+    } else {
+      state.failedAttempts++;
+      input.classList.add("error", "shake");
+      err.textContent = "Incorrect password";
+      err.classList.add("show");
+      setTimeout(() => { input.classList.remove("error", "shake"); }, 400);
+      if (state.failedAttempts >= 5) {
+        state.lockoutUntil = Date.now() + 30000;
+        state.failedAttempts = 0;
+        startCountdown();
+      }
+    }
+  }
+  function startCountdown() {
+    const tick = () => {
+      const left = Math.ceil((state.lockoutUntil - Date.now()) / 1000);
+      if (left <= 0) { err.textContent = ""; err.classList.remove("show"); unlock.disabled = false; return; }
+      err.textContent = `Try again in ${left}s`;
+      err.classList.add("show");
+      unlock.disabled = true;
+      setTimeout(tick, 1000);
+    };
+    tick();
+  }
+  if (Date.now() < state.lockoutUntil) startCountdown();
+  unlock.onclick = tryUnlock;
+  input.onkeydown = e => { if (e.key === "Enter") tryUnlock(); };
+  setTimeout(() => input.focus(), 100);
+}
+
+async function openAdmin() {
+  if (state.adminUnlocked) { state.currentPage = "admin"; renderAdmin(); return; }
+  openPasswordSheet();
+}
+
+function setupAdminTriggers() {
+  try {
+    let logoTapCount=0, logoTapTimer=null;
+    const logo = document.getElementById("logo");
+    if (logo) {
+      logo.addEventListener("pointerup", e => { e.preventDefault(); logoTapCount++; clearTimeout(logoTapTimer); logoTapTimer=setTimeout(()=>logoTapCount=0,3000); if(logoTapCount>=5){logoTapCount=0; openAdmin();} });
+      let lp; logo.addEventListener("pointerdown", () => { lp=setTimeout(openAdmin,1500); });
+      logo.addEventListener("pointerup", () => clearTimeout(lp));
+      logo.addEventListener("pointercancel", () => clearTimeout(lp));
+    }
+    let footerTapCount=0, footerTapTimer=null;
+    const footer = document.getElementById("footerCopyright");
+    if (footer) footer.addEventListener("pointerup", e => { e.preventDefault(); footerTapCount++; clearTimeout(footerTapTimer); footerTapTimer=setTimeout(()=>footerTapCount=0,3000); if(footerTapCount>=5){footerTapCount=0; openAdmin();} });
+    let hsCount=0, hsTimer=null;
+    const hs = document.getElementById("adminHotspot");
+    if (hs) hs.addEventListener("pointerup", e => { e.preventDefault(); hsCount++; clearTimeout(hsTimer); hsTimer=setTimeout(()=>hsCount=0,3000); if(hsCount>=5){hsCount=0; openAdmin();} });
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") { document.querySelectorAll("#adminOverlay,#pwOverlay,.confirm-sheet").forEach(el => el.remove()); }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase()==="a"){ e.preventDefault(); openAdmin(); }
+    });
+    function checkHash(){ if(location.hash==="#admin") openAdmin(); }
+    window.addEventListener("hashchange", checkHash); checkHash();
+  } catch(e) { console.error(e); }
+}
+
+document.getElementById("themeToggle").onclick = () => applyTheme(state.theme==="dark"?"light":"dark");
+document.querySelectorAll("[data-page]").forEach(btn => { btn.onclick = () => { state.currentPage = btn.dataset.page; state.currentMovieId = null; render(); window.scrollTo(0,0); }; });
+document.getElementById("globalSearch").oninput = () => { if(state.currentPage!=="browse") state.currentPage="browse"; render(); };
+
+if (channel) {
+  channel.onmessage = () => {
+    loadData();
+    showToast("Updated");
+    render();
+  };
+}
+window.addEventListener("storage", e => {
+  if (e.key && e.key.startsWith("pb_")) {
+    loadData();
+    render();
+  }
+});
+
+setInterval(() => {
+  document.querySelectorAll(".time").forEach(el => {
+    el.textContent = timeAgo(+el.dataset.ts);
+  });
+}, 30000);
+
+try { loadData(); setupAdminTriggers(); render(); } catch(e) { console.error(e); document.getElementById("app").innerHTML = "<p>Error loading.</p>"; }
+</script>
+</body>
+</html>
